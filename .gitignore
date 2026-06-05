@@ -1,0 +1,42 @@
+# Python / runtime
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# lzp-video-subtitle runtime artifacts
+.envs/
+envs/
+models/
+work/
+state/
+smoke-tests/
+*_subtitle/
+
+# Local test outputs
+tmp/
+outputs/
+*.local.json
+healthcheck*.json
+setup_plan*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Large media
+*.mp4
+*.mov
+*.m4v
+*.mp3
+*.wav
+*.m4a
+*.aac
+*.flac
