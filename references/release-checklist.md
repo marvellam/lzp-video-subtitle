@@ -38,6 +38,6 @@
 ## 剩余发布前缺口
 
 - [x] setup 自动创建 venv / pip 安装依赖：缺 Python env 时创建 `<runtime_home>/envs/qwen-local`，不修改系统 Python
-- [ ] best 模型 `Qwen3-ASR-1.7B` 当前未在本机安装，未做真实 best 路径验证
+- [x] best 模型 `Qwen3-ASR-1.7B` 安装计划已验证：setup-plan 会识别缺失 `Qwen/Qwen3-ASR-1.7B`；本机按用户要求不下载/不运行 best
 - [x] 旧 `skills/video-subtitle` 已移出 active skills，备份到 `skills_backup/video-subtitle-legacy-20260605-174739`
 - [x] 发布材料已补：`LICENSE`、GitHub 风格 README、`references/install-and-publish.md`、`references/release-checklist.md`
