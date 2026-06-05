@@ -280,33 +280,15 @@ learn_candidates.csv
 
 ---
 
-## 重要决策
+## 更多信息
 
-- skill 名称：`lzp-video-subtitle`
-- 默认 profile：`general`
-- 默认模型：`Qwen3-ASR-1.7B`
-- 降级模型：`Qwen3-ASR-0.6B`
-- 对齐模型：`Qwen3-ForcedAligner-0.6B`
-- 模型下载源：ModelScope 优先，HuggingFace fallback
-- LLM review：后续作为独立入口，不进入默认 run 流程
-
----
-
-## 内部 CLI
-
-底层 CLI 规格见：
+安装细节：
 
 ```text
-references/cli-spec.md
+references/install.md
 ```
 
-Agent 行为规则见：
-
-```text
-SKILL.md
-```
-
-示例输出见：
+示例输出：
 
 ```text
 references/examples/sample-output/
