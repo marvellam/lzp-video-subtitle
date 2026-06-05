@@ -311,20 +311,3 @@ SKILL.md
 ```text
 references/release-checklist.md
 ```
-
----
-
-## 当前实现状态
-
-已验证：
-
-```text
-- OpenClaw 可识别：lzp-video-subtitle ready
-- smoke-test 真实样片跑通
-- run 正式流程跑通
-- learn 写入 profile 后重跑生效
-- 默认输出目录只暴露三件套 + debug/
-- setup-plan best 可正确识别 Qwen/Qwen3-ASR-1.7B 缺失，但本机未安装 best 模型
-```
-
-剩余发布前决策：是否需要真实安装/验证 best 模型；旧版 `video-subtitle` 已移入备份。
