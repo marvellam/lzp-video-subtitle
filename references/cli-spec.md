@@ -288,21 +288,6 @@ reason：为什么建议检查，例如 short_duration / too_long / corrections:
 
 ---
 
-## 十二、当前实现状态
-
-| 能力 | 状态 | 说明 |
-|-|-|-|
-| healthcheck | 可运行 | 只检查，不安装、不下载 |
-| setup-plan | 可运行 | 基于 healthcheck 输出 `missing[]` |
-| setup | 可运行 | `missing=[]` 会跳过；缺 Python env 时创建 `<runtime_home>/envs/qwen-local` 并安装依赖；缺模型时下载 |
-| smoke-test | 可运行 | 用户提供短样片或完整视频；完整视频自动截取前 60 秒 |
-| init-profile | 可运行 | 创建 profile，不覆盖已有文件 |
-| run | 可运行 | 已接入 Qwen 本地 runner |
-| batch | 可运行 | 按每个视频旁边 `_subtitle` 输出 |
-| learn | 可运行 | 生成候选；确认后备份并写入 `corrections.csv` |
-
----
-
 ## 十三、LLM Review
 
 第一版不进入默认 run。

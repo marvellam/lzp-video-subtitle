@@ -1,4 +1,4 @@
-# 安装与发布说明
+# 安装说明
 
 ## Skill 安装后不会自动下载模型
 
@@ -60,11 +60,3 @@ align: Qwen/Qwen3-ForcedAligner-0.6B
 ```
 
 setup-plan 会列出缺失模型；setup 只下载缺失项。
-
-## 发布前检查
-
-见：
-
-```text
-references/release-checklist.md
-```

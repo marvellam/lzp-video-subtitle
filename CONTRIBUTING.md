@@ -31,7 +31,7 @@ If behavior changes, update all relevant files:
 - `README.md`
 - `SKILL.md`
 - `references/cli-spec.md`
-- `references/release-checklist.md`
+- `references/install.md`
 
 ## Review focus
 

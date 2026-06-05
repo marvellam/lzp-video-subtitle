@@ -68,10 +68,10 @@ Qwen Python 环境默认放在：
 <runtime_home>/envs/qwen-local
 ```
 
-更多安装/发布细节见：
+更多安装细节见：
 
 ```text
-references/install-and-publish.md
+references/install.md
 ```
 
 ---
@@ -306,8 +306,8 @@ Agent 行为规则见：
 SKILL.md
 ```
 
-发布前验收清单见：
+示例输出见：
 
 ```text
-references/release-checklist.md
+references/examples/sample-output/
 ```

@@ -1,7 +1,0 @@
-﻿max_chars: 14
-soft_max_chars: 16
-hard_max_chars: 18
-min_duration: 1.0
-hard_min_duration: 0.6
-remove_punctuation: true
-
