@@ -12,6 +12,14 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_SCAN_MAX_DEPTH = 4
@@ -314,6 +322,7 @@ def print_healthcheck_summary(report: dict) -> None:
     print("先检查一下电脑环境：Python、ffmpeg、显卡、模型目录。这一步不会安装或下载东西。")
     print("\n检查完成：")
     print(f"- ffmpeg：{_yes_no(bool((report.get('ffmpeg') or {}).get('found')))}")
+    print(f"- ffprobe：{_yes_no(bool((report.get('ffprobe') or {}).get('found')))}")
     print(f"- 显卡：{_gpu_label(report.get('gpu') or {})}")
     print(f"- Qwen 高质量模型：{_yes_no(bool(models.get('qwen_asr_best')))}")
     print(f"- Qwen 小模型：{_yes_no(bool(models.get('qwen_asr_small')))}")
@@ -353,7 +362,8 @@ def healthcheck(args) -> dict:
     scan_roots = getattr(args, "scan_root", None) or []
     python_paths, scan_reports = find_pythons(home=home, extra_python=getattr(args, "python", None), scan_roots=scan_roots)
     pythons = _probe_unique_pythons(python_paths)
-    model_base = _default_models_dir()
+    model_base = _default_models_dir(home)
+    ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
     models = {
         "qwen_asr_best": (model_base / "Qwen3-ASR-1.7B" / "model.safetensors").exists(),
         "qwen_asr_small": (model_base / "Qwen3-ASR-0.6B" / "model.safetensors").exists(),
@@ -365,6 +375,7 @@ def healthcheck(args) -> dict:
         "home": str(home),
         "paths": {"skill_root": str(SKILL_ROOT), "home_exists": home.exists(), "home_writable_parent": os.access(str(home.parent if home.parent.exists() else Path.home()), os.W_OK), "models_dir": str(model_base)},
         "ffmpeg": {"found": bool(ffmpeg), "path": ffmpeg},
+        "ffprobe": {"found": bool(ffprobe), "path": ffprobe},
         "gpu": gpu,
         "scan_roots": scan_reports,
         "pythons": pythons,
@@ -372,6 +383,7 @@ def healthcheck(args) -> dict:
         "notes": [
             "Default healthcheck does not scan whole disks or network shares.",
             "Use --python to test a known environment; use --scan-root for bounded existing-venv discovery.",
+            "Models default to <home>/models/qwen after command --home is resolved; override with VIDEO_SUBTITLE_MODELS_DIR / LZP_VIDEO_SUBTITLE_MODELS_DIR / QWEN_SUBTITLE_MODELS if needed.",
             "--scan-root is bounded by depth, directory count, timeout, symlink skipping, and common heavy-directory pruning.",
             "Custom homes, including NAS/network paths, are allowed but must pass healthcheck/smoke tests.",
         ],
@@ -423,6 +435,14 @@ def setup_plan(args) -> dict:
         for p in report["pythons"]
     )
     missing = []
+    if not (report.get("ffmpeg") or {}).get("found"):
+        missing.append({
+            "type": "binary",
+            "label": "ffmpeg",
+            "detail": "未在 PATH 中检测到 ffmpeg；需要用于音频抽取和 smoke-test 截取样片",
+        })
+    if not (report.get("ffprobe") or {}).get("found"):
+        warnings.append("ffprobe not detected: sample duration / RTF may be unavailable; ffmpeg fallback will be attempted where possible.")
     if not qwen_env_ready:
         missing.append({
             "type": "python_env",
@@ -465,6 +485,7 @@ def setup_plan(args) -> dict:
         warnings.append(f"GPU type {gpu_type!r} is not validated by this skill yet; proceed with smoke tests.")
     plan = {
         "home": report["home"],
+        "paths": report.get("paths") or {},
         "safe": "No install/download has been performed. Run setup explicitly after reviewing requirements and warnings.",
         "product_backend": "qwen-local",
         "backend_policy": "fixed-qwen-local; hardware affects warnings/feasibility, not automatic model selection",
@@ -556,11 +577,11 @@ def _workspace_root() -> Path:
     return SKILL_ROOT.parent.parent
 
 
-def _default_models_dir() -> Path:
-    workspace_models = _workspace_root() / "models"
-    if workspace_models.exists():
-        return workspace_models
-    return default_home() / "models" / "qwen"
+def _default_models_dir(home: Path | None = None) -> Path:
+    env_models = os.environ.get("VIDEO_SUBTITLE_MODELS_DIR") or os.environ.get("LZP_VIDEO_SUBTITLE_MODELS_DIR") or os.environ.get("QWEN_SUBTITLE_MODELS")
+    if env_models:
+        return Path(env_models)
+    return (home or default_home()) / "models" / "qwen"
 
 
 def _asr_model_id(model_tier: str) -> str:
@@ -677,6 +698,7 @@ def _runner_config(
     profile: str,
     home: Path,
     model_tier: str,
+    prefer_cuda: bool = True,
 ) -> dict:
     return {
         "video_path": str(input_path.resolve()),
@@ -684,7 +706,7 @@ def _runner_config(
         "project_lexicon": str((home / "profiles" / profile / "corrections.csv").resolve()),
         "asr_model": _asr_model_id(model_tier),
         "aligner_model": "Qwen/Qwen3-ForcedAligner-0.6B",
-        "prefer_cuda": False,
+        "prefer_cuda": bool(prefer_cuda),
         "language": "Chinese",
         "max_chars": 14,
         "min_duration": 1.0,
@@ -692,7 +714,7 @@ def _runner_config(
     }
 
 
-def _call_qwen_runner(config: dict, *, work_dir: Path | None = None, models_dir: Path | None = None, python_executable: str | None = None) -> None:
+def _call_qwen_runner(config: dict, *, work_dir: Path | None = None, models_dir: Path | None = None, python_executable: str | None = None, numba_cache_dir: Path | None = None) -> None:
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     debug_dir = output_dir / "debug"
@@ -700,7 +722,11 @@ def _call_qwen_runner(config: dict, *, work_dir: Path | None = None, models_dir:
     config_path = debug_dir / "lzp_run_config.json"
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     env = os.environ.copy()
-    env.setdefault("QWEN_SUBTITLE_MODELS", str((models_dir or _default_models_dir()).resolve()))
+    resolved_models_dir = models_dir or _default_models_dir()
+    env.setdefault("QWEN_SUBTITLE_MODELS", str(resolved_models_dir.resolve()))
+    resolved_numba_cache = numba_cache_dir or (Path(config["output_dir"]).parent / "numba_cache")
+    resolved_numba_cache.mkdir(parents=True, exist_ok=True)
+    env.setdefault("NUMBA_CACHE_DIR", str(resolved_numba_cache.resolve()))
     if work_dir:
         work_dir.mkdir(parents=True, exist_ok=True)
         env["QWEN_SUBTITLE_WORK"] = str(work_dir.resolve())
@@ -711,13 +737,24 @@ def _call_qwen_runner(config: dict, *, work_dir: Path | None = None, models_dir:
 
 def _probe_audio_duration_seconds(path: Path) -> float | None:
     ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
-    if not ffprobe:
+    if ffprobe:
+        r = run_probe([ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], timeout=20)
+        if r.get("ok") and r.get("stdout"):
+            try:
+                return float(str(r["stdout"]).splitlines()[-1].strip())
+            except Exception:
+                pass
+    ffmpeg = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    if not ffmpeg:
         return None
-    r = run_probe([ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], timeout=20)
-    if not r.get("ok") or not r.get("stdout"):
+    r = run_probe([ffmpeg, "-i", str(path)], timeout=20)
+    text = "\n".join([str(r.get("stderr") or ""), str(r.get("stdout") or "")])
+    import re
+    m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text)
+    if not m:
         return None
     try:
-        return float(str(r["stdout"]).splitlines()[-1].strip())
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     except Exception:
         return None
 
@@ -788,8 +825,8 @@ def run_command(args) -> dict:
     output_dir = Path(args.output_dir) if args.output_dir else default_output_dir_for_video(input_path)
     model_tier = getattr(args, "model_tier", "small")
     py = _select_qwen_python(home=home, extra_python=getattr(args, "python", None))
-    cfg = _runner_config(input_path=input_path, output_dir=output_dir, profile=args.profile, home=home, model_tier=model_tier)
-    _call_qwen_runner(cfg, work_dir=home / "work" / output_dir.name, python_executable=py)
+    cfg = _runner_config(input_path=input_path, output_dir=output_dir, profile=args.profile, home=home, model_tier=model_tier, prefer_cuda=not getattr(args, "cpu", False))
+    _call_qwen_runner(cfg, work_dir=home / "work" / output_dir.name, models_dir=_default_models_dir(home), python_executable=py, numba_cache_dir=home / "numba_cache")
     result = {
         "stage": "subtitle_generated",
         "active_profile": args.profile,
@@ -820,8 +857,8 @@ def batch_command(args) -> dict:
     outputs = []
     for p in files:
         out = default_output_dir_for_video(p)
-        cfg = _runner_config(input_path=p, output_dir=out, profile=args.profile, home=home, model_tier=model_tier)
-        _call_qwen_runner(cfg, work_dir=home / "work" / out.name, python_executable=py)
+        cfg = _runner_config(input_path=p, output_dir=out, profile=args.profile, home=home, model_tier=model_tier, prefer_cuda=not getattr(args, "cpu", False))
+        _call_qwen_runner(cfg, work_dir=home / "work" / out.name, models_dir=_default_models_dir(home), python_executable=py, numba_cache_dir=home / "numba_cache")
         outputs.append({"input": str(p), "output_dir": str(out)})
     result = {
         "stage": "subtitle_generated",
@@ -1009,8 +1046,25 @@ def setup_command(args) -> dict:
         env_python = (plan.get("qwen_local") or {}).get("env_python")
         if env_python:
             print(f"运行环境：{env_python}")
-        print(f"模型目录：{(plan.get('paths') or {}).get('models_dir') or _default_models_dir()}")
+        print(f"模型目录：{(plan.get('paths') or {}).get('models_dir') or _default_models_dir(home)}")
+
         print("下一步建议提供 30-60 秒样片，运行 smoke-test。")
+        return result
+
+    unsupported_missing = [item for item in missing if item.get("type") not in {"python_env", "model"}]
+    if unsupported_missing:
+        result = {
+            "stage": "setup_blocked",
+            "home": str(home),
+            "model_tier": args.model_tier,
+            "status": "blocked_missing_external_dependency",
+            "missing": unsupported_missing,
+            "plan": plan,
+        }
+        write_current_state(home, result)
+        print("setup 无法自动补齐以下外部依赖，请先安装/配置后再重试：")
+        for item in unsupported_missing:
+            print(f"- {item.get('label')}: {item.get('detail')}")
         return result
 
     env_missing = any(item.get("type") == "python_env" for item in missing)
@@ -1020,7 +1074,7 @@ def setup_command(args) -> dict:
         py = _create_or_update_qwen_env(home)
     else:
         py = _select_qwen_python(home=home, extra_python=getattr(args, "python", None))
-    models_dir = _default_models_dir()
+    models_dir = _default_models_dir(home)
     model_ids = [item["model_id"] for item in missing if item.get("type") == "model"]
     _download_missing_models(py, models_dir, model_ids)
     result = {"stage": "setup_completed", "home": str(home), "python": py, "models_dir": str(models_dir), "model_tier": args.model_tier, "installed_or_downloaded": (["python_env"] if env_missing else []) + model_ids, "status": "ready"}
@@ -1044,8 +1098,8 @@ def smoke_test(args) -> dict:
     error = None
     try:
         py = _select_qwen_python(home=home, extra_python=getattr(args, "python", None))
-        cfg = _runner_config(input_path=sample_path, output_dir=output_dir, profile=args.profile, home=home, model_tier=args.model_tier)
-        _call_qwen_runner(cfg, work_dir=sample_dir / "work", python_executable=py)
+        cfg = _runner_config(input_path=sample_path, output_dir=output_dir, profile=args.profile, home=home, model_tier=args.model_tier, prefer_cuda=not getattr(args, "cpu", False))
+        _call_qwen_runner(cfg, work_dir=sample_dir / "work", models_dir=_default_models_dir(home), python_executable=py, numba_cache_dir=home / "numba_cache")
     except Exception as e:
         ok = False
         error = repr(e)
@@ -1097,6 +1151,7 @@ def add_qwen_runtime_args(p):
     p.add_argument("--backend", default="qwen-local", choices=["qwen-local"], help="Product backend is fixed to qwen-local")
     p.add_argument("--model-tier", default="best", choices=["best", "small"], help="best=Qwen3-ASR-1.7B, small=Qwen3-ASR-0.6B")
     p.add_argument("--python", help="Explicit Python executable with qwen_asr installed")
+    p.add_argument("--cpu", action="store_true", help="Force CPU even when CUDA is available")
 
 
 def main():
@@ -1122,6 +1177,7 @@ def main():
     p.add_argument("--model-tier", default="small", choices=["best", "small"])
     p.add_argument("--home")
     p.add_argument("--python", help="Explicit Python executable with qwen_asr installed")
+    p.add_argument("--cpu", action="store_true", help="Force CPU even when CUDA is available")
     p = sub.add_parser("batch")
     p.add_argument("--input-dir", required=True)
     p.add_argument("--output-dir", help="Deprecated for default flow; batch defaults to one output folder next to each input video")
@@ -1129,6 +1185,7 @@ def main():
     p.add_argument("--model-tier", default="small", choices=["best", "small"])
     p.add_argument("--home")
     p.add_argument("--python", help="Explicit Python executable with qwen_asr installed")
+    p.add_argument("--cpu", action="store_true", help="Force CPU even when CUDA is available")
     p = sub.add_parser("learn")
     p.add_argument("--profile", default="general")
     p.add_argument("--raw", required=True, help="Original generated subtitle/text, e.g. final.srt")

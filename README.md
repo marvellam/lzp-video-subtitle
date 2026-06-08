@@ -1,11 +1,14 @@
 # lzp-video-subtitle
 
-本地中文字幕生成 skill。核心目标：让用户用三段式流程完成字幕生成，并把人工修正沉淀成长期词库。
+本地中文字幕生成 skill。核心目标：用一个主入口完成本地 Qwen 字幕生成，并把人工修正沉淀成长期词库。
 
 ```text
-1. /lzp-video-subtitle-install  安装 / 环境准备 / 运行测试
-2. /lzp-video-subtitle-run      选择词库 / 提供视频 / 生成字幕
-3. /lzp-video-subtitle-learn    学习 / 沉淀词库
+主入口：/lzp-video-subtitle
+
+内部阶段：
+1. 首次检查 / 初始化：healthcheck -> setup-plan -> 用户确认 -> setup -> smoke-test
+2. 正式生成字幕：选择 profile -> 提供视频 -> run / batch
+3. 学习修正：对比 final.srt 与 edited.srt -> 候选确认 -> learn 写入 profile
 ```
 
 默认使用 Qwen 本地模型，不把视频发到云端。
@@ -41,18 +44,22 @@
 
 安装 skill 本体后，不会立即下载模型。
 
-第一次使用请从：
+第一次使用直接从主入口开始：
 
 ```text
-/lzp-video-subtitle-install
+/lzp-video-subtitle
 ```
 
-开始。
-
-它会按以下顺序处理：
+skill 会自动执行只读检查：
 
 ```text
-healthcheck -> setup-plan -> 用户确认 -> setup -> smoke-test
+healthcheck -> setup-plan
+```
+
+如果环境缺少依赖或模型，会先告知缺什么、安装位置和预计占用，并等用户确认后再执行：
+
+```text
+setup -> smoke-test
 ```
 
 运行环境默认放在：
@@ -66,6 +73,18 @@ Qwen Python 环境默认放在：
 
 ```text
 <runtime_home>/envs/qwen-local
+```
+
+模型目录默认跟随当前 runtime home：
+
+```text
+<runtime_home>/models/qwen
+```
+
+如需复用已有模型，可显式设置：
+
+```powershell
+$env:VIDEO_SUBTITLE_MODELS_DIR = "D:\WorkBuddy_Local\qwen_local_3060_pilot\models"
 ```
 
 更多安装细节见：
@@ -103,12 +122,12 @@ C:\Users\Lin\Videos\lesson01.mp4
 
 ---
 
-## 第一步：安装 / 环境准备 / 运行测试
+## 第一阶段：首次检查 / 初始化 / 运行测试
 
 入口：
 
 ```text
-/lzp-video-subtitle-install
+/lzp-video-subtitle
 ```
 
 这个阶段会做三件事：
@@ -121,38 +140,44 @@ C:\Users\Lin\Videos\lesson01.mp4
 
 检查本身不会安装或下载东西。
 
-如果已经具备运行环境，我会直接告诉你“无需重复安装或下载”。
+如果已经具备运行环境，会直接提示“无需重复安装或下载”。
 
-如果缺少模型或依赖，我会先告诉你需要补什么、大概占用多少空间，并等你确认后再安装。
+如果缺少模型或依赖，会先告诉用户需要补什么、大概占用多少空间，并等用户确认后再安装。
 
-安装完成后，我会让你提供一个视频 / 音频文件路径做运行测试：
+安装完成后，提供一个视频 / 音频文件路径做运行测试：
 
 ```text
 最好是 30-60 秒短样片；
-如果你给正式视频，我只截取前 60 秒做测试，不处理完整视频。
+如果给正式视频，只截取前 60 秒做测试，不处理完整视频。
 ```
 
-运行测试通过后，才建议进入下一阶段。
+运行测试通过后，再进入正式生成字幕。
 
 ---
 
-## 第二步：运行 / 生成字幕
+## 第二阶段：运行 / 生成字幕
 
-入口：
+主入口仍然是：
 
 ```text
-/lzp-video-subtitle-run
+/lzp-video-subtitle
 ```
 
-这个阶段会先让你选择一个“词库 / profile”。
+用户可以自然语言说明：
 
-如果你没有项目名，默认使用：
+```text
+帮我给这个视频生成字幕
+```
+
+这个阶段会先选择一个“词库 / profile”。
+
+如果没有项目名，默认使用：
 
 ```text
 general
 ```
 
-然后我会让你提供正式要处理的视频或文件夹路径。
+然后提供正式要处理的视频或文件夹路径。
 
 单个视频：
 
@@ -166,14 +191,14 @@ C:\Users\...\video.mp4
 C:\Users\...\videos\
 ```
 
-正式生成字幕时，我会同时确认输出位置：
+正式生成字幕时，会同时确认输出位置：
 
 ```text
 默认：保存在视频旁边的 <video_basename>_subtitle 文件夹
-也可以：你指定一个输出目录
+也可以：指定一个输出目录
 ```
 
-smoke-test 是安装阶段的测试输出，会自动放到测试目录，不需要你指定输出路径。
+smoke-test 是初始化阶段的测试输出，会自动放到测试目录，不需要用户指定输出路径。
 
 生成完成后，请先人工检查：
 
@@ -183,28 +208,34 @@ final.txt
 review_focus.csv
 ```
 
-如果你修改了字幕，请重新导出另存一份 srt 文件，这非常重要。
+如果修改了字幕，请重新导出另存一份 srt 文件。
 
 ---
 
-## 第三步：学习 / 沉淀词库
+## 第三阶段：学习 / 沉淀词库
 
-入口：
+主入口仍然是：
 
 ```text
-/lzp-video-subtitle-learn
+/lzp-video-subtitle
 ```
 
-请提供两份字幕文件路径：
+用户可以自然语言说明：
+
+```text
+学习这份人工修正
+```
+
+需要两份字幕文件路径：
 
 ```text
 1. 原始生成的 final.srt
 2. 人工修改后的 final_edited.srt / edited.srt
 ```
 
-如果上一步刚刚生成过字幕，我通常能自动找到原始 `final.srt`，你只需要提供人工修改后的版本。
+如果上一步刚生成过字幕，通常能自动找到原始 `final.srt`，用户只需要提供人工修改后的版本。
 
-我会先对比两份字幕，生成：
+系统会先对比两份字幕，生成：
 
 ```text
 learn_candidates.csv
@@ -212,84 +243,40 @@ learn_candidates.csv
 
 这一步只生成候选，不会直接写入词库。
 
-只有你确认后，才会写入当前 profile；写入前会自动备份原来的 `corrections.csv`。
+只有用户确认后，才会写入当前 profile；写入前会自动备份原来的 `corrections.csv`。
 
 ---
 
-## 用户会看到的关键提示
+## Windows / PowerShell 注意
 
-### 检查环境
+PowerShell 示例变量使用 `$runtimeHome`，不要使用 `$home`，因为 `$HOME` 是保留变量。
 
-```text
-你好，我先帮你检查一下电脑环境，看看是否具备所有需要的工具 / 环境。
-这一步不会安装或下载东西，请稍等。
+如遇终端中文乱码，可设置：
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
 ```
 
-### 没有缺失项
+如果 CUDA 可用，运行默认优先使用 GPU；如需强制 CPU，可在 CLI 层使用：
 
-```text
-检查完成。当前环境已满足要求，无需重复安装或下载。
-下一步建议做一次运行测试。
-```
-
-### 有缺失项
-
-```text
-检查完成。下一步需要补齐以下内容：
-- ...
-
-这一步会下载模型和依赖，可能耗时较久。
-是否确认开始安装？
-```
-
-### 索要运行测试样片
-
-```text
-请提供一个视频 / 音频文件路径：
-- 最好是 30-60 秒短样片；或
-- 直接给一个正式视频，我会只截取前 60 秒做测试，不会处理完整视频。
-```
-
-### 正式生成前确认输出位置
-
-```text
-输出路径可以由你指定。
-如果你不指定，我会默认把字幕结果保存在视频旁边：
-<input_video_dir>/<video_basename>_subtitle/
-```
-
-### 生成完成
-
-```text
-字幕生成完成。
-
-已生成：
-- final.srt
-- final.txt
-- review_focus.csv
-
-请先人工检查 final.srt / final.txt，尤其是 review_focus.csv 标记的位置。
-```
-
-### 学习写入前
-
-```text
-我找到了 N 条可学习内容。
-是否写入 PROFILE_NAME 词库？
+```powershell
+python scripts/video_subtitle_cli.py run --input <video> --cpu
 ```
 
 ---
 
-## 更多信息
+## 底层 CLI
 
-安装细节：
-
-```text
-references/install.md
-```
-
-示例输出：
+底层 CLI 文件：
 
 ```text
-references/examples/sample-output/
+scripts/video_subtitle_cli.py
 ```
+
+内部命令包括：
+
+```text
+healthcheck / setup-plan / setup / smoke-test / init-profile / run / batch / learn
+```
+
+这些是 agent 内部能力；普通用户不需要逐个记忆。

@@ -6,17 +6,17 @@
 scripts/video_subtitle_cli.py
 ```
 
-用户主要通过三个入口使用 skill；CLI 命令是内部能力。
+用户主要通过主入口 `/lzp-video-subtitle` 使用 skill；CLI 命令是内部能力。
 
 ---
 
 ## 一、阶段入口与内部命令
 
-| 用户入口 | 内部命令 | 说明 |
+| 用户入口 | 内部阶段 / 命令 | 说明 |
 |-|-|-|
-| `/lzp-video-subtitle-install` | healthcheck / setup-plan / setup / smoke-test | 安装、环境准备、运行测试 |
-| `/lzp-video-subtitle-run` | init-profile / run / batch | 选择词库、索要视频、生成字幕 |
-| `/lzp-video-subtitle-learn` | learn | 候选修正确认后写入词库 |
+| `/lzp-video-subtitle` | healthcheck / setup-plan / setup / smoke-test | 首次检查、环境准备、运行测试；install 是内部阶段，不作为长期独立入口 |
+| `/lzp-video-subtitle` | init-profile / run / batch | 选择词库、索要视频、生成字幕 |
+| `/lzp-video-subtitle` | learn | 候选修正确认后写入词库 |
 
 ---
 
@@ -55,8 +55,10 @@ python scripts/video_subtitle_cli.py healthcheck
 ```text
 Python
 ffmpeg
+ffprobe
 GPU / CUDA
 runtime home
+models dir（默认 <runtime_home>/models/qwen，可由 VIDEO_SUBTITLE_MODELS_DIR 覆盖）
 best 模型是否存在
 small 模型是否存在
 aligner 模型是否存在
@@ -136,7 +138,7 @@ python scripts/video_subtitle_cli.py smoke-test --backend qwen-local --model-tie
 python scripts/video_subtitle_cli.py smoke-test --backend qwen-local --model-tier small --input smoke_sample.mp4
 ```
 
-运行测试归属于 install 阶段。
+运行测试归属于首次检查 / 初始化阶段。
 
 如果用户提供完整视频，agent 可先截取：
 
@@ -159,9 +161,15 @@ ffmpeg -y -i full_video.mp4 -t 60 -c copy smoke_sample.mp4
 }
 ```
 
-结果分支：
+如需强制 CPU：
+
+```bash
+python scripts/video_subtitle_cli.py smoke-test --backend qwen-local --model-tier small --input smoke_sample.mp4 --cpu
+```
+
 
 ```text
+结果分支：
 keep_best
 install_or_enable_small
 fix_environment

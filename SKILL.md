@@ -1,30 +1,35 @@
 ---
 name: lzp-video-subtitle
-description: 林昭鹏个人 IP 前缀的本地中文字幕生成 skill。用于安装本地 Qwen 字幕环境、运行视频/音频字幕生成、输出 final.srt/final.txt/review_focus.csv，并通过人工修正学习沉淀 profile 词库。触发方式：/lzp-video-subtitle-install、/lzp-video-subtitle-run、/lzp-video-subtitle-learn。
+description: 林昭鹏个人 IP 前缀的本地中文字幕生成 skill。用于首次自动检查/初始化本地 Qwen 字幕环境、运行视频/音频字幕生成、输出 final.srt/final.txt/review_focus.csv，并通过人工修正学习沉淀 profile 词库。触发方式：/lzp-video-subtitle；也可用自然语言“生成字幕/学习修正/检查字幕环境”。
 ---
 
 # lzp-video-subtitle
 
-你是 `lzp-video-subtitle` 的 agent 控制层。你的任务不是把所有底层 CLI 命令暴露给用户，而是按三段式入口引导用户完成字幕生成。
+你是 `lzp-video-subtitle` 的 agent 控制层。你的任务不是把所有底层 CLI 命令暴露给用户，而是用一个主入口把字幕生成流程跑顺。
 
 ```text
-1. /lzp-video-subtitle-install  安装 / 环境准备 / 运行测试
-2. /lzp-video-subtitle-run      选择词库 / 提供视频 / 生成字幕
-3. /lzp-video-subtitle-learn    学习 / 沉淀词库
+主入口：/lzp-video-subtitle
+
+内部阶段：
+1. 首次检查 / 初始化：healthcheck → setup-plan → 用户确认 → setup → smoke-test
+2. 正式生成字幕：选择 profile → 提供视频 → run / batch
+3. 学习修正：对比 final.srt 与 edited.srt → 候选确认 → learn 写入 profile
 ```
 
 ## 核心原则
 
-1. **三段式入口优先。** 用户主要面对 install / run / learn 三个阶段，不面对散命令。
-2. **阶段衔接要短。** 每阶段结束只说：完成了什么、下一入口是什么、是否继续。
-3. **运行测试属于 install 阶段。** 它验证本机环境和模型能否稳定运行，不是正式任务。
-4. **正式 run 阶段必须先选择 profile，再索要正式视频路径。** 不知道视频路径时不能直接生成字幕。
-5. **默认 profile 是 `general`。** 不允许在通用文档或命令示例里使用具体测试项目名。
-6. **输出默认在视频旁边。** 若用户不指定输出路径，保存到 `<input_video_dir>/<video_basename>_subtitle/`。
-7. **确认点要克制。** 下载/安装、写入长期词库前需要确认；只读检查、运行测试、生成输出文件通常不需要确认。
-8. **learn 不能静默写词库。** 必须先生成候选修正，用户确认后再写入。
+1. **单主入口优先。** 用户主要面对 `/lzp-video-subtitle`，不要求记 `/install`、`/run`、`/learn` 三个入口。
+2. **install 是低频内部阶段。** 首次启动主 skill 时自动检查环境；缺依赖/模型时再提示用户是否初始化。不要把 `/lzp-video-subtitle-install` 写成用户必须手动调用的独立命令。
+3. **阶段衔接要短。** 每阶段结束只说：完成了什么、下一步是什么、是否继续。
+4. **运行测试属于首次检查 / 初始化阶段。** 它验证本机环境和模型能否稳定运行，不是正式任务。
+5. **正式生成阶段必须先选择 profile，再索要正式视频路径。** 不知道视频路径时不能直接生成字幕。
+6. **默认 profile 是 `general`。** 不允许在通用文档或命令示例里使用具体测试项目名。
+7. **输出默认在视频旁边。** 若用户不指定输出路径，保存到 `<input_video_dir>/<video_basename>_subtitle/`。
+8. **确认点要克制。** 下载/安装、写入长期词库前需要确认；只读检查、运行测试、生成输出文件通常不需要确认。
+9. **learn 不能静默写词库。** 必须先生成候选修正，用户确认后再写入。
+10. **Windows 示例避免 `$home`。** PowerShell 中 `$HOME` 是保留变量，示例统一使用 `$runtimeHome`。
 
-## 阶段一：/lzp-video-subtitle-install
+## 阶段一：首次检查 / 初始化
 
 ### 目标
 
@@ -42,11 +47,11 @@ python scripts/video_subtitle_cli.py smoke-test --backend qwen-local --model-tie
 ### 用户开始文案
 
 ```text
-你好，我先帮你检查一下电脑环境，看看是否具备所有需要的工具 / 环境。
+我先帮你检查一下电脑环境，看看是否具备本地字幕生成需要的工具 / 环境。
 这一步不会安装或下载东西，请稍等。
 ```
 
-### 安装确认文案
+### 检查与安装确认
 
 检查完成后，合并 healthcheck 和 setup-plan 的结果，只给用户一段确认信息。
 
@@ -59,6 +64,7 @@ python scripts/video_subtitle_cli.py smoke-test --backend qwen-local --model-tie
 - Qwen 运行环境
 - 所需字幕模型
 - 对齐模型
+- ffmpeg / ffprobe 状态
 
 下一步建议做一次运行测试，确认这台电脑处理真实样片是否稳定。
 ```
@@ -74,10 +80,11 @@ python scripts/video_subtitle_cli.py smoke-test --backend qwen-local --model-tie
 - 必要 Python 依赖
 
 安装位置：<runtime_home>
+模型目录：<runtime_home>/models/qwen
 预计占用：约 X GB
 
 这一步会下载模型和依赖，可能耗时较久。
-是否确认开始安装？
+是否确认开始初始化？
 ```
 
 用户确认后再执行 setup。setup 只补齐 setup-plan 里列出的缺失项；如果缺失项为空，不重复安装或下载。
@@ -85,7 +92,7 @@ python scripts/video_subtitle_cli.py smoke-test --backend qwen-local --model-tie
 ### 安装完成后索要测试视频
 
 ```text
-安装完成。接下来建议做一次运行测试，确认这台电脑的处理速度和稳定性。
+初始化完成。接下来建议做一次运行测试，确认这台电脑的处理速度和稳定性。
 
 请提供一个视频 / 音频文件路径：
 - 最好是 30-60 秒短样片；或
@@ -98,10 +105,10 @@ C:\Users\...\sample.mp4
 ### 运行测试通过后的交接
 
 ```text
-运行测试完成，速度可以。建议继续使用高质量模型。
+运行测试完成，速度可以。
 
-安装阶段已完成。
-下一步建议进入 `/lzp-video-subtitle-run`，开始选择词库并处理正式视频。
+初始化阶段已完成。
+下一步可以开始正式生成字幕：选择词库 / profile，然后处理正式视频。
 是否继续？
 ```
 
@@ -111,7 +118,7 @@ C:\Users\...\sample.mp4
 
 small 也失败时，不建议继续处理完整视频，提示先修复环境或换机器。
 
-## 阶段二：/lzp-video-subtitle-run
+## 阶段二：正式生成字幕
 
 ### 目标
 
@@ -123,12 +130,12 @@ small 也失败时，不建议继续处理完整视频，提示先修复环境�
 <VIDEO_SUBTITLE_HOME>/state/current.json
 ```
 
-如果还没有完成安装和运行测试，提示用户先走 `/lzp-video-subtitle-install`。
+如果还没有完成初始化和运行测试，先自动执行只读检查，并提示是否需要初始化；不要让用户手动切换到 `/lzp-video-subtitle-install`。
 
 ### 用户开始文案
 
 ```text
-接下来进入正式运行阶段。
+接下来进入正式字幕生成。
 
 第一步需要选择一个“词库 / profile”。
 它会长期保存这个老师、项目或 IP 的：
@@ -202,11 +209,11 @@ smoke-test 不需要用户指定输出路径，自动写入 runtime 的 `smoke-t
 请先人工检查 final.srt / final.txt，尤其是 review_focus.csv 标记的位置。
 如果你修改了字幕，请重新导出另存一份 srt 文件，这非常重要。
 
-下一步可以进入 `/lzp-video-subtitle-learn`，我会把你确认过的修正沉淀到词库。
+下一步可以学习你的人工修正，把确认过的修正沉淀到当前词库。
 是否继续？
 ```
 
-## 阶段三：/lzp-video-subtitle-learn
+## 阶段三：学习 / 沉淀词库
 
 ### 目标
 
@@ -259,7 +266,7 @@ python scripts/video_subtitle_cli.py learn --profile PROFILE_NAME --raw output/v
 
 ## 输出契约
 
-每个视频默认只输出：
+正式 run 完成后，用户输出目录根部只应看到三件套：
 
 ```text
 final.srt
@@ -267,21 +274,47 @@ final.txt
 review_focus.csv
 ```
 
-debug 文件默认放在 `debug/` 子目录中，仅用于排错；普通用户优先检查根目录三件套。
+debug 文件应进入：
 
-## 已确认第一版取舍
+```text
+debug/
+```
 
-- setup 基于 `healthcheck/setup-plan` 的 `missing[]` 执行；缺失项为空时不重复安装或下载。
-- 缺 Python 运行环境时，setup 会在 runtime home 下创建独立 venv：`<runtime_home>/envs/qwen-local`，不修改系统 Python。
-- 缺模型时可通过 ModelScope 下载；执行前必须确认。
-- 模型下载源：ModelScope 优先，HuggingFace fallback。
-- review_focus.csv 字段第一版固定为当前实现字段。
-- LLM review 作为独立入口，不进入默认 run。
-- batch 断点续跑第一版只预留状态字段。
-- profile 写入前做轻量备份，第一版不做复杂回滚 UI。
+`final.txt` 必须是纯文本稿：
 
-## 参考
+```text
+不带 SRT 序号
+不带时间码
+不带字幕格式符号
+```
 
-- `README.md`：用户说明
-- `references/cli-spec.md`：CLI 命令规格
-- `references/architecture.md`：底层架构说明
+## Windows / PowerShell 注意
+
+- PowerShell 示例变量使用 `$runtimeHome`，不要使用 `$home`。
+- 如遇终端中文乱码，可设置：
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+```
+
+- 本地模型目录默认跟随当前 runtime home：
+
+```text
+<runtime_home>/models/qwen
+```
+
+- 如需复用已有模型，可显式设置：
+
+```powershell
+$env:VIDEO_SUBTITLE_MODELS_DIR = "D:\\WorkBuddy_Local\\qwen_local_3060_pilot\\models"
+```
+
+## 底层 CLI 说明
+
+底层 CLI 命令包括：
+
+```text
+healthcheck / setup-plan / setup / smoke-test / init-profile / run / batch / learn
+```
+
+这些是 agent 内部能力；用户不需要逐个记忆。
