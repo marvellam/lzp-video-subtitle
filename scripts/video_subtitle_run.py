@@ -41,7 +41,7 @@ def fmt_ts(t: float) -> str:
 
 def run(cmd):
     print("$", " ".join(map(str, cmd)), flush=True)
-    return subprocess.run(cmd, check=True)
+    return subprocess.run(cmd, check=True, text=True, encoding="utf-8", errors="replace")
 
 
 def find_ffmpeg() -> str:

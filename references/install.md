@@ -48,10 +48,16 @@ VIDEO_SUBTITLE_HOME
 <runtime>/models/qwen
 ```
 
+如需复用已有 Qwen Python 环境，优先显式指定，不重复创建新环境：
+
+```powershell
+python scripts/video_subtitle_cli.py smoke-test --python "D:\WorkBuddy_Local\qwen_local_3060_pilot\.venv\Scripts\python.exe" --input "C:\path\sample.mp4"
+```
+
 如需复用已有模型目录，可显式设置：
 
 ```powershell
-$env:VIDEO_SUBTITLE_MODELS_DIR = "D:\path\to\qwen\models"
+$env:VIDEO_SUBTITLE_MODELS_DIR = "D:\WorkBuddy_Local\qwen_local_3060_pilot\models"
 ```
 
 也支持：
@@ -126,6 +132,6 @@ python scripts/video_subtitle_cli.py run --input <video> --cpu
 
 ## ffmpeg / ffprobe
 
-- `ffmpeg` 是音频抽取和 smoke-test 截样片所需依赖。
-- `ffprobe` 用于读取样片时长和计算 RTF。
-- 如果缺少 `ffprobe`，CLI 会尝试用 `ffmpeg -i` 输出 fallback 解析时长；healthcheck 仍会单独提示 ffprobe 状态。
+- `ffmpeg` 是音频抽取和 smoke-test 截样片所需依赖，属于核心运行链路。
+- `ffprobe` 用于读取样片时长和计算 RTF，属于推荐依赖，不是字幕生成的阻断依赖。
+- 如果缺少 `ffprobe`，CLI 会尝试用 `ffmpeg -i` 输出 fallback 解析时长；fallback 失败时，字幕生成仍可成功，但 `sample_duration` / `rtf` 会为空，并在 `warnings` 中说明原因。

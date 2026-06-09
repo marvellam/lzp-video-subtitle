@@ -81,6 +81,12 @@ Qwen Python 环境默认放在：
 <runtime_home>/models/qwen
 ```
 
+如需复用已有 Qwen Python 环境，优先显式指定，不要重复安装：
+
+```powershell
+python scripts/video_subtitle_cli.py smoke-test --python "D:\WorkBuddy_Local\qwen_local_3060_pilot\.venv\Scripts\python.exe" --input "C:\path\sample.mp4"
+```
+
 如需复用已有模型，可显式设置：
 
 ```powershell
@@ -198,7 +204,9 @@ C:\Users\...\videos\
 也可以：指定一个输出目录
 ```
 
-smoke-test 是初始化阶段的测试输出，会自动放到测试目录，不需要用户指定输出路径。
+smoke-test 是初始化阶段的测试输出，会自动放到测试目录，不需要用户指定输出路径。**但必须提供 `--input <本地视频路径>` 作为测试样本**；skill 不内置测试视频，也不会为了测试自动下载样本。
+
+`sample_duration` / `rtf` 是性能统计项，不是字幕生成的通过条件。`ffprobe` 可让统计更完整；缺少 `ffprobe` 时 CLI 会尝试用 `ffmpeg -i` fallback，fallback 失败时仍可生成字幕，但报告会把 `duration_available=false`、`rtf_available=false` 和原因写入 `warnings`。
 
 生成完成后，请先人工检查：
 

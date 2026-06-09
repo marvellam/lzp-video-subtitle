@@ -189,7 +189,9 @@ C:\Users\...\videos\
 
 ### 输出路径
 
-smoke-test 不需要用户指定输出路径，自动写入 runtime 的 `smoke-tests/` 测试目录。
+smoke-test 不需要用户指定输出路径，自动写入 runtime 的 `smoke-tests/` 测试目录。**但必须让用户提供 `--input <本地视频路径>` 作为测试样本**；不要内置样本，也不要为了 smoke-test 下载样本。
+
+`sample_duration` / `rtf` 只是性能统计项，不是核心字幕链路的通过条件。缺少 `ffprobe` 时可以继续生成字幕；报告必须用 `warnings` 清楚说明 duration/RTF 不可用的原因。
 
 正式 run 阶段必须让用户知道输出位置：
 
@@ -303,7 +305,13 @@ $env:PYTHONIOENCODING = "utf-8"
 <runtime_home>/models/qwen
 ```
 
-- 如需复用已有模型，可显式设置：
+如果已经有可用 Qwen Python 环境，优先复用，不重复安装：
+
+```powershell
+python scripts/video_subtitle_cli.py smoke-test --python "D:\\WorkBuddy_Local\\qwen_local_3060_pilot\\.venv\\Scripts\\python.exe" --input "C:\\path\\sample.mp4"
+```
+
+如需复用已有模型，可显式设置：
 
 ```powershell
 $env:VIDEO_SUBTITLE_MODELS_DIR = "D:\\WorkBuddy_Local\\qwen_local_3060_pilot\\models"

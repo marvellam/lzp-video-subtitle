@@ -58,8 +58,8 @@ def default_home() -> Path:
 
 def run_probe(cmd: list[str], timeout: int = 20) -> dict:
     try:
-        p = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
-        return {"ok": p.returncode == 0, "returncode": p.returncode, "stdout": p.stdout.strip(), "stderr": p.stderr.strip()}
+        p = subprocess.run(cmd, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=timeout)
+        return {"ok": p.returncode == 0, "returncode": p.returncode, "stdout": (p.stdout or "").strip(), "stderr": (p.stderr or "").strip()}
     except Exception as e:
         return {"ok": False, "error": repr(e)}
 
@@ -732,42 +732,55 @@ def _call_qwen_runner(config: dict, *, work_dir: Path | None = None, models_dir:
         env["QWEN_SUBTITLE_WORK"] = str(work_dir.resolve())
     runner = SKILL_ROOT / "scripts" / "video_subtitle_run.py"
     py = python_executable or _select_qwen_python()
-    subprocess.run([py, str(runner), "--config", str(config_path)], check=True, env=env)
+    subprocess.run([py, str(runner), "--config", str(config_path)], check=True, env=env, text=True, encoding="utf-8", errors="replace")
 
 
-def _probe_audio_duration_seconds(path: Path) -> float | None:
+def _probe_audio_duration_seconds(path: Path) -> tuple[float | None, list[str]]:
+    warnings: list[str] = []
     ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
     if ffprobe:
         r = run_probe([ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], timeout=20)
         if r.get("ok") and r.get("stdout"):
             try:
-                return float(str(r["stdout"]).splitlines()[-1].strip())
-            except Exception:
-                pass
+                return float(str(r["stdout"]).splitlines()[-1].strip()), warnings
+            except Exception as e:
+                warnings.append(f"ffprobe returned unparseable duration: {e!r}; trying ffmpeg fallback.")
+        else:
+            warnings.append("ffprobe duration probe failed; trying ffmpeg fallback.")
+    else:
+        warnings.append("ffprobe not found; trying ffmpeg fallback for duration. Subtitle generation can still succeed without ffprobe.")
     ffmpeg = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
     if not ffmpeg:
-        return None
+        warnings.append("ffmpeg not found; sample_duration and rtf are unavailable.")
+        return None, warnings
     r = run_probe([ffmpeg, "-i", str(path)], timeout=20)
     text = "\n".join([str(r.get("stderr") or ""), str(r.get("stdout") or "")])
     import re
     m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text)
     if not m:
-        return None
+        warnings.append("Could not parse duration from ffmpeg output; sample_duration and rtf are unavailable.")
+        return None, warnings
     try:
-        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
-    except Exception:
-        return None
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)), warnings
+    except Exception as e:
+        warnings.append(f"Could not parse ffmpeg duration fields: {e!r}; sample_duration and rtf are unavailable.")
+        return None, warnings
+
+
+def _probe_audio_duration_value(path: Path) -> float | None:
+    duration, _warnings = _probe_audio_duration_seconds(path)
+    return duration
 
 
 def _extract_smoke_sample(input_path: Path, sample_path: Path, seconds: int = 60) -> Path:
-    duration = _probe_audio_duration_seconds(input_path)
+    duration = _probe_audio_duration_value(input_path)
     if duration is not None and duration <= seconds + 3:
         return input_path
     ffmpeg = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
     if not ffmpeg:
         raise RuntimeError("需要截取 60 秒样片，但没有找到 ffmpeg。请先安装 ffmpeg 或提供 30-60 秒短样片。")
     sample_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run([ffmpeg, "-y", "-i", str(input_path), "-t", str(seconds), "-c", "copy", str(sample_path)], check=True)
+    subprocess.run([ffmpeg, "-y", "-i", str(input_path), "-t", str(seconds), "-c", "copy", str(sample_path)], check=True, text=True, encoding="utf-8", errors="replace", capture_output=True)
     return sample_path
 
 
@@ -1090,9 +1103,10 @@ def smoke_test(args) -> dict:
     home = Path(args.home) if args.home else default_home()
     input_path = Path(args.input)
     sample_dir = home / "smoke-tests" / time.strftime("%Y%m%d-%H%M%S")
+    sample_dir.mkdir(parents=True, exist_ok=True)
     sample_path = _extract_smoke_sample(input_path, sample_dir / f"{input_path.stem}_60s{input_path.suffix}", seconds=60)
     output_dir = sample_dir / "output"
-    duration = _probe_audio_duration_seconds(sample_path)
+    duration, duration_warnings = _probe_audio_duration_seconds(sample_path)
     started = time.perf_counter()
     ok = True
     error = None
@@ -1104,8 +1118,12 @@ def smoke_test(args) -> dict:
         ok = False
         error = repr(e)
     elapsed = time.perf_counter() - started
-    rtf = round(elapsed / duration, 3) if duration and duration > 0 else None
+    duration_available = bool(duration and duration > 0)
+    rtf = round(elapsed / duration, 3) if duration_available else None
     recommendation = _smoke_recommendation(ok, duration, elapsed, args.model_tier, error)
+    warnings = list(duration_warnings)
+    if ok and not duration_available:
+        warnings.append("Subtitle generation succeeded, but sample_duration/rtf are unavailable because duration probing failed. ffprobe is recommended but not required.")
     result = {
         "stage": "smoke_test_completed",
         "success": ok,
@@ -1115,9 +1133,12 @@ def smoke_test(args) -> dict:
         "sample_path": str(sample_path),
         "output_dir": str(output_dir),
         "sample_duration": duration,
+        "duration_available": duration_available,
         "processing_time": round(elapsed, 2),
         "rtf": rtf,
+        "rtf_available": rtf is not None,
         "recommendation": recommendation,
+        "warnings": warnings,
         "error": error,
     }
     write_current_state(home, result)
@@ -1125,7 +1146,11 @@ def smoke_test(args) -> dict:
     report_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     if ok:
         print("运行测试完成。")
-        print(f"耗时：{round(elapsed, 2)} 秒；RTF：{rtf}")
+        print(f"耗时：{round(elapsed, 2)} 秒；RTF：{rtf if rtf is not None else '不可用'}")
+        if warnings:
+            print("提示：")
+            for item in warnings:
+                print(f"- {item}")
         if recommendation == "install_or_enable_small":
             print("可以跑，但比较慢。建议批量视频先试小模型 small。")
         elif recommendation == "use_stronger_machine":
