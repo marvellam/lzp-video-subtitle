@@ -1,10 +1,23 @@
-# 安装说明
+# 安装与初始化说明
 
-## Skill 安装后不会自动下载模型
+这份说明只解释安装 / 初始化边界。普通用户优先阅读根目录 `README.md`。
 
-安装 skill 本体只会获得说明文档、agent 行为规则和本地脚本。
+---
 
-模型、Python 依赖、运行环境会在用户首次使用主入口后，由 agent 自动检查并在确认后初始化：
+## 1. 安装 skill 本体不会自动下载模型
+
+安装 `lzp-video-subtitle` skill 本体时，只会获得：
+
+```text
+SKILL.md
+README.md
+references/
+scripts/
+```
+
+不会自动下载 Qwen 模型，也不会自动安装 Python 依赖。
+
+首次使用主入口时，agent 会先执行只读检查：
 
 ```text
 /lzp-video-subtitle
@@ -13,12 +26,14 @@
 内部流程：
 
 ```text
-healthcheck -> setup-plan -> 用户确认 -> setup -> smoke-test
+healthcheck → setup-plan → 用户确认 → setup → smoke-test
 ```
 
-> 不再要求用户单独记忆 `/lzp-video-subtitle-install`。install 是主入口首次启动时的内部阶段。
+> 不要求用户单独记忆 `/lzp-video-subtitle-install`。install 是主入口首次启动时的内部阶段。
 
-## Runtime home
+---
+
+## 2. Runtime home
 
 默认 runtime home：
 
@@ -34,48 +49,25 @@ LZP_VIDEO_SUBTITLE_HOME
 VIDEO_SUBTITLE_HOME
 ```
 
-## 模型目录
-
-模型目录默认基于当前命令解析出的 runtime home：
-
-```text
-<runtime_home>/models/qwen
-```
-
-如果命令传入 `--home <runtime>`，默认模型目录就是：
-
-```text
-<runtime>/models/qwen
-```
-
-如需复用已有 Qwen Python 环境，优先显式指定，不重复创建新环境：
+也可在 CLI 命令中显式传入：
 
 ```powershell
-python scripts/video_subtitle_cli.py smoke-test --python "D:\WorkBuddy_Local\qwen_local_3060_pilot\.venv\Scripts\python.exe" --input "C:\path\sample.mp4"
+python scripts/video_subtitle_cli.py healthcheck --home "C:\path\runtime"
 ```
 
-如需复用已有模型目录，可显式设置：
+---
 
-```powershell
-$env:VIDEO_SUBTITLE_MODELS_DIR = "D:\WorkBuddy_Local\qwen_local_3060_pilot\models"
-```
+## 3. Python 环境
 
-也支持：
-
-```text
-LZP_VIDEO_SUBTITLE_MODELS_DIR
-QWEN_SUBTITLE_MODELS
-```
-
-## Python 环境
-
-产品默认使用独立环境：
+默认 Qwen Python 环境：
 
 ```text
 <runtime_home>/envs/qwen-local
 ```
 
-缺少 Qwen Python env 时，setup 会创建这个 venv，并安装：
+如果缺少 Qwen Python env，`setup` 会在 runtime home 下创建独立 venv，并安装必要依赖，不修改系统 Python。
+
+主要依赖包括：
 
 ```text
 torch
@@ -88,9 +80,54 @@ soundfile
 qwen-omni-utils
 ```
 
-不会修改系统 Python。
+### 复用已有 Qwen Python 环境
 
-## 模型
+如果机器上已经有可用 Qwen 环境，优先复用，不重复创建新环境：
+
+```powershell
+python scripts/video_subtitle_cli.py smoke-test --python "D:\WorkBuddy_Local\qwen_local_3060_pilot\.venv\Scripts\python.exe" --input "C:\path\sample.mp4"
+```
+
+---
+
+## 4. 模型目录
+
+模型目录默认基于当前 runtime home：
+
+```text
+<runtime_home>/models/qwen
+```
+
+如果命令传入：
+
+```powershell
+--home "C:\path\runtime"
+```
+
+默认模型目录就是：
+
+```text
+C:\path\runtime\models\qwen
+```
+
+### 复用已有模型目录
+
+可显式设置：
+
+```powershell
+$env:VIDEO_SUBTITLE_MODELS_DIR = "D:\WorkBuddy_Local\qwen_local_3060_pilot\models"
+```
+
+也支持：
+
+```text
+LZP_VIDEO_SUBTITLE_MODELS_DIR
+QWEN_SUBTITLE_MODELS
+```
+
+---
+
+## 5. 模型策略
 
 默认模型策略：
 
@@ -100,9 +137,84 @@ small: Qwen/Qwen3-ASR-0.6B
 align: Qwen/Qwen3-ForcedAligner-0.6B
 ```
 
-setup-plan 会列出缺失模型；setup 只下载缺失项。
+`setup-plan` 会列出缺失模型；`setup` 只下载缺失项。
 
-## Windows / PowerShell 注意
+如果 `best` 慢或失败，可以使用 `small` 复测。
+
+---
+
+## 6. ffmpeg / ffprobe
+
+### 核心依赖
+
+```text
+ffmpeg
+```
+
+`ffmpeg` 用于抽取音频和截取 smoke-test 样片，属于核心运行链路。
+
+### 推荐但不阻断
+
+```text
+ffprobe
+```
+
+`ffprobe` 用于读取样片时长和计算 RTF。
+
+如果缺少 `ffprobe`，CLI 会尝试用：
+
+```text
+ffmpeg -i
+```
+
+fallback 解析时长。
+
+如果 fallback 也失败，字幕生成仍可成功，但报告中会出现：
+
+```json
+{
+  "duration_available": false,
+  "rtf_available": false,
+  "warnings": ["原因说明"]
+}
+```
+
+这不代表字幕主链路失败。
+
+---
+
+## 7. smoke-test 样本要求
+
+smoke-test 必须由用户提供本地视频 / 音频样本：
+
+```powershell
+python scripts/video_subtitle_cli.py smoke-test --input "C:\path\sample.mp4"
+```
+
+skill 不内置测试视频，也不会为了测试自动下载样本。
+
+建议：
+
+```text
+30-60 秒短样片最好；
+如果给正式视频，CLI 只截取前 60 秒做测试。
+```
+
+---
+
+## 8. GPU / CPU
+
+如果 CUDA 可用，`run / batch / smoke-test` 默认优先使用 GPU。
+
+如需强制 CPU：
+
+```powershell
+python scripts/video_subtitle_cli.py run --input "C:\path\video.mp4" --cpu
+```
+
+---
+
+## 9. Windows / PowerShell 注意
 
 PowerShell 示例变量使用 `$runtimeHome`，不要使用 `$home`，因为 `$HOME` 是保留变量。
 
@@ -112,26 +224,12 @@ PowerShell 示例变量使用 `$runtimeHome`，不要使用 `$home`，因为 `$H
 $env:PYTHONIOENCODING = "utf-8"
 ```
 
+当前 CLI 已对 subprocess 输出做 UTF-8 + errors=replace 兜底，正常情况下不需要额外处理 Windows GBK 解码问题。
+
 首次运行如遇 `numba` cache locator 问题，当前 CLI 会默认设置：
 
 ```text
-NUMBA_CACHE_DIR=<output_parent>/numba_cache
+NUMBA_CACHE_DIR=<runtime_home>/numba_cache
 ```
 
 通常无需用户手动处理。
-
-## GPU / CPU
-
-如果 CUDA 可用，run / batch / smoke-test 默认优先使用 GPU。
-
-如需强制 CPU，可加：
-
-```powershell
-python scripts/video_subtitle_cli.py run --input <video> --cpu
-```
-
-## ffmpeg / ffprobe
-
-- `ffmpeg` 是音频抽取和 smoke-test 截样片所需依赖，属于核心运行链路。
-- `ffprobe` 用于读取样片时长和计算 RTF，属于推荐依赖，不是字幕生成的阻断依赖。
-- 如果缺少 `ffprobe`，CLI 会尝试用 `ffmpeg -i` 输出 fallback 解析时长；fallback 失败时，字幕生成仍可成功，但 `sample_duration` / `rtf` 会为空，并在 `warnings` 中说明原因。
