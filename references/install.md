@@ -251,6 +251,16 @@ fallback 解析时长。
 
 这不代表字幕主链路失败。
 
+但 RTF 是生产可用性的关键判断项。标准：
+
+| RTF | 判断 |
+| --- | --- |
+| `<= 1.5` | 生产可用 |
+| `1.5 - 3.0` | 勉强可跑，建议优化，不建议批量或长视频 |
+| `> 3.0` | 基本不适合正式使用 |
+
+因此 `success=true` 只说明字幕链路跑完，不等于生产可用。正式判断要看 `production_ready`、`execution_path.device_used` 和 `performance_check`。
+
 ---
 
 ## 7. smoke-test 样本要求

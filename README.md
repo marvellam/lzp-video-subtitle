@@ -74,11 +74,21 @@ python scripts/video_subtitle_cli.py smoke-test --python "D:\WorkBuddy_Local\qwe
 $env:VIDEO_SUBTITLE_MODELS_DIR = "D:\WorkBuddy_Local\qwen_local_3060_pilot\models"
 ```
 
-### 非核心指标不阻断主流程
+### 统计项与生产可用性
 
 `ffprobe` 可以让 `sample_duration / rtf` 统计更完整，但它不是字幕生成的阻断依赖。
 
 如果 `ffprobe` 不可用，CLI 会尝试用 `ffmpeg -i` fallback。即使最终拿不到时长，只要字幕三件套生成成功，主链路仍算成功；报告会在 `warnings` 里说明原因。
+
+但这只代表“字幕链路跑完”，不代表“生产可用”。生产可用性必须看 smoke-test 报告里的 `performance_check`：
+
+```text
+RTF <= 1.5：生产可用
+1.5 < RTF <= 3.0：勉强可跑，建议优化，不建议批量或长视频
+RTF > 3.0：基本不适合正式使用
+```
+
+例如 10 分钟视频如果要跑 30 分钟，RTF=3，已经不应该被标记为正式可用。
 
 ---
 
@@ -203,7 +213,9 @@ smoke-test 输出会自动放到：
 
 ### smoke-test 通过标准
 
-核心通过标准是：
+smoke-test 分两层判断。
+
+第一层是“字幕链路跑完”：
 
 ```text
 输入视频可读
@@ -214,7 +226,15 @@ success = true
 error = null
 ```
 
-`sample_duration / rtf` 是性能统计项，不是字幕生成的通过条件。
+第二层是“生产可用”：
+
+```text
+device_used 符合预期：NVIDIA 机器应为 cuda:*
+RTF <= 1.5
+production_ready = true
+```
+
+`sample_duration / rtf` 不是字幕生成链路的通过条件，但它是生产可用性的关键判断项。
 
 报告里会有：
 
@@ -225,6 +245,11 @@ error = null
   "duration_available": true,
   "rtf": 1.575,
   "rtf_available": true,
+  "production_ready": false,
+  "performance_check": {
+    "level": "marginal_optimize",
+    "message": "RTF > 1.5; marginal for production, optimize before batch or long videos"
+  },
   "warnings": []
 }
 ```
@@ -239,6 +264,16 @@ error = null
   "warnings": ["原因说明"]
 }
 ```
+
+RTF 标准：
+
+| RTF | 判断 |
+| --- | --- |
+| `<= 1.5` | 生产可用 |
+| `1.5 - 3.0` | 勉强可跑，建议优化，不建议批量或长视频 |
+| `> 3.0` | 基本不适合正式使用 |
+
+不要只看 `success=true`。`success=true` 只说明链路跑完；正式使用必须看 `production_ready`、`execution_path.device_used` 和 `performance_check`。
 
 ---
 

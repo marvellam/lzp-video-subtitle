@@ -881,11 +881,23 @@ def _smoke_recommendation(ok: bool, duration: float | None, elapsed: float, mode
         return "fix_environment"
     if duration and duration > 0:
         rtf = elapsed / duration
-        if model_tier == "best" and rtf > 2.5:
-            return "install_or_enable_small"
-        if rtf > 5:
-            return "use_stronger_machine"
+        if rtf > 3:
+            return "not_production_ready"
+        if rtf > 1.5:
+            return "optimize_before_batch"
     return "keep_best" if model_tier == "best" else "keep_small"
+
+
+def _performance_check(ok: bool, rtf: float | None) -> dict:
+    if not ok:
+        return {"passed": False, "level": "failed", "rtf": rtf, "thresholds": {"good_max": 1.5, "optimize_max": 3.0}, "message": "smoke-test failed"}
+    if rtf is None:
+        return {"passed": False, "level": "unknown", "rtf": None, "thresholds": {"good_max": 1.5, "optimize_max": 3.0}, "message": "RTF unavailable; cannot judge production readiness"}
+    if rtf <= 1.5:
+        return {"passed": True, "level": "production_ready", "rtf": rtf, "thresholds": {"good_max": 1.5, "optimize_max": 3.0}, "message": "RTF <= 1.5; acceptable for production use"}
+    if rtf <= 3.0:
+        return {"passed": False, "level": "marginal_optimize", "rtf": rtf, "thresholds": {"good_max": 1.5, "optimize_max": 3.0}, "message": "RTF > 1.5; marginal for production, optimize before batch or long videos"}
+    return {"passed": False, "level": "not_production_ready", "rtf": rtf, "thresholds": {"good_max": 1.5, "optimize_max": 3.0}, "message": "RTF > 3.0; effectively not production-ready"}
 
 
 def state_dir(home: Path) -> Path:
@@ -1224,6 +1236,7 @@ def smoke_test(args) -> dict:
     duration_available = bool(duration and duration > 0)
     rtf = round(elapsed / duration, 3) if duration_available else None
     recommendation = _smoke_recommendation(ok, duration, elapsed, args.model_tier, error)
+    performance_check = _performance_check(ok, rtf)
     warnings = list(duration_warnings)
     if ok and not duration_available:
         warnings.append("Subtitle generation succeeded, but sample_duration/rtf are unavailable because duration probing failed. ffprobe is recommended but not required.")
@@ -1242,6 +1255,8 @@ def smoke_test(args) -> dict:
         "processing_time": round(elapsed, 2),
         "rtf": rtf,
         "rtf_available": rtf is not None,
+        "performance_check": performance_check,
+        "production_ready": bool(ok and performance_check.get("passed")),
         "python": py if 'py' in locals() else None,
         "run_report": str(runner_report_path) if runner_report_path.exists() else None,
         "execution_path": {
@@ -1264,14 +1279,17 @@ def smoke_test(args) -> dict:
         print(f"耗时：{round(elapsed, 2)} 秒；RTF：{rtf if rtf is not None else '不可用'}")
         execution_path = result.get("execution_path") or {}
         print(f"执行路径：device_used={execution_path.get('device_used') or 'unknown'}；cuda_available={execution_path.get('cuda_available')}；cuda_device={execution_path.get('cuda_device') or 'none'}")
+        print(f"性能结论：{performance_check.get('level')}；{performance_check.get('message')}")
         if warnings:
             print("提示：")
             for item in warnings:
                 print(f"- {item}")
-        if recommendation == "install_or_enable_small":
+        if recommendation == "optimize_before_batch":
+            print("可以跑，但速度已经偏勉强。建议先优化 CUDA/模型/机器配置，暂不建议批量或长视频。")
+        elif recommendation == "not_production_ready":
+            print("本次链路虽然跑完，但速度已不适合正式使用。RTF > 3 意味着 10 分钟视频可能需要 30 分钟以上，建议修复环境或换更强机器。")
+        elif recommendation == "install_or_enable_small":
             print("可以跑，但比较慢。建议批量视频先试小模型 small。")
-        elif recommendation == "use_stronger_machine":
-            print("可以跑，但当前机器比较慢。正式批量处理前，建议先用 30-60 秒真实样片再测一次；长视频可能耗时较久。")
         else:
             print("建议：可以进入正式 run 阶段。")
     else:
