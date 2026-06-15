@@ -80,6 +80,38 @@ soundfile
 qwen-omni-utils
 ```
 
+### NVIDIA / CUDA 版 PyTorch
+
+如果检测到 NVIDIA 显卡，`setup-plan` 会检查 Qwen Python 环境里的：
+
+```text
+torch.cuda.is_available()
+```
+
+判断规则：
+
+- 没有 Qwen Python 环境：列为缺失项，`setup` 创建环境并安装 CUDA 版 PyTorch。
+- 有 Qwen Python 环境但 CUDA 不可用：列为 `CUDA 版 PyTorch` 缺失项，`setup` 会修复该环境的 PyTorch。
+- 安装 / 修复后 CUDA 仍不可用：初始化失败，不会被视为成功。
+
+默认 CUDA PyTorch 源：
+
+```text
+https://download.pytorch.org/whl/cu121
+```
+
+如需指定其他 PyTorch CUDA wheel 源，可设置：
+
+```powershell
+$env:LZP_TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu124"
+```
+
+或：
+
+```powershell
+$env:VIDEO_SUBTITLE_TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu124"
+```
+
 ### 复用已有 Qwen Python 环境
 
 如果机器上已经有可用 Qwen 环境，优先复用，不重复创建新环境：
@@ -243,6 +275,20 @@ skill 不内置测试视频，也不会为了测试自动下载样本。
 ## 8. GPU / CPU
 
 如果 CUDA 可用，`run / batch / smoke-test` 默认优先使用 GPU。
+
+`smoke-test` 完成后必须查看报告里的执行路径：
+
+```json
+"execution_path": {
+  "cuda_requested": true,
+  "cuda_available": true,
+  "cuda_device": "...",
+  "device_used": "cuda:0"
+}
+```
+
+只有 `device_used` 为 `cuda:0`（或其他 cuda 设备）时，才说明这次 smoke-test 真的走了 GPU。
+如果 `cuda_available=false` 或 `device_used=cpu`，即使 `success=true`，也只能说明 CPU 链路跑通，不能算 GPU 验证通过。
 
 如需强制 CPU：
 

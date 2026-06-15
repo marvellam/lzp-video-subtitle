@@ -62,6 +62,12 @@ setup
 python scripts/video_subtitle_cli.py smoke-test --python "D:\WorkBuddy_Local\qwen_local_3060_pilot\.venv\Scripts\python.exe" --input "C:\path\sample.mp4"
 ```
 
+如果机器有 NVIDIA 显卡，`setup-plan` 会检查 Qwen Python 环境里的 `torch.cuda.is_available()`：
+
+- 没有 Qwen 环境：列为缺失项，`setup` 创建环境并安装 CUDA 版 PyTorch。
+- 有 Qwen 环境但 CUDA 不可用：列为 `CUDA 版 PyTorch` 缺失项，`setup` 会修复该环境的 PyTorch。
+- 安装 / 修复后 CUDA 仍不可用：初始化失败，不会被视为成功。
+
 如果已有模型目录，也可以复用：
 
 ```powershell
@@ -315,6 +321,19 @@ $env:PYTHONIOENCODING = "utf-8"
 ```
 
 如果 CUDA 可用，默认优先使用 GPU。
+
+请以 smoke-test 报告里的执行路径为准：
+
+```json
+"execution_path": {
+  "cuda_requested": true,
+  "cuda_available": true,
+  "cuda_device": "...",
+  "device_used": "cuda:0"
+}
+```
+
+只有 `device_used` 显示 `cuda:0` / `cuda:*`，才代表这次真的走了 GPU。`success=true` 但 `device_used=cpu` 只能说明 CPU 跑通。
 
 如需强制 CPU：
 

@@ -510,6 +510,15 @@ def setup_plan(args) -> dict:
             "detail": "缺少同时包含 torch / qwen_asr / modelscope 的 Python 环境",
             "packages": ["torch", "qwen-asr", "modelscope", "transformers", "accelerate", "librosa", "soundfile"],
         })
+    if has_nvidia and qwen_env_ready and not qwen_cuda_ready:
+        missing.append({
+            "type": "cuda_torch",
+            "label": "CUDA 版 PyTorch",
+            "detail": "已检测到 NVIDIA 显卡，也找到了 Qwen Python 环境，但该环境 torch.cuda.is_available() 为 false；需要安装/修复 CUDA 版 PyTorch",
+            "package": "torch",
+            "default_index_url": "https://download.pytorch.org/whl/cu121",
+            "override_env": ["LZP_TORCH_INDEX_URL", "VIDEO_SUBTITLE_TORCH_INDEX_URL"],
+        })
     if not selected_asr_ready:
         missing.append({
             "type": "model",
@@ -562,6 +571,7 @@ def setup_plan(args) -> dict:
             "env_ready": qwen_env_ready,
             "env_python": qwen_env_probe.get("executable") if qwen_env_probe else None,
             "cuda_ready": qwen_cuda_ready,
+            "cuda_required": has_nvidia,
             "selected_asr_model": selected_model["asr_model"],
             "aligner_model": "Qwen3-ForcedAligner-0.6B",
             "downloads": [item for item in missing if item.get("type") == "model"],
@@ -699,6 +709,24 @@ def _runtime_env_python(home: Path) -> Path:
     return home / "envs" / "qwen-local" / "bin" / "python"
 
 
+def _install_cuda_torch(env_python: str | Path) -> dict:
+    gpu = detect_gpu()
+    has_nvidia = gpu.get("type") == "nvidia"
+    if not has_nvidia:
+        return {"skipped": True, "reason": "no NVIDIA GPU detected", "gpu": gpu}
+    torch_index_url = os.environ.get("LZP_TORCH_INDEX_URL") or os.environ.get("VIDEO_SUBTITLE_TORCH_INDEX_URL") or "https://download.pytorch.org/whl/cu121"
+    print(f"检测到 NVIDIA 显卡，安装 / 修复 CUDA 版 PyTorch：{torch_index_url}")
+    subprocess.run([str(env_python), "-m", "pip", "install", "--upgrade", "torch", "--index-url", torch_index_url], check=True)
+    probe = python_probe(str(env_python))
+    if not probe.get("cuda_available"):
+        raise RuntimeError(
+            "检测到 NVIDIA 显卡，但安装后的 PyTorch 仍不可用 CUDA。\n"
+            f"torch_version={probe.get('torch_version')} cuda_available={probe.get('cuda_available')} torch_error={probe.get('torch_error')}\n"
+            "请确认 NVIDIA 驱动正常，或通过 LZP_TORCH_INDEX_URL / VIDEO_SUBTITLE_TORCH_INDEX_URL 指定匹配的 PyTorch CUDA wheel index 后重试。"
+        )
+    return {"skipped": False, "index_url": torch_index_url, "probe": probe}
+
+
 def _create_or_update_qwen_env(home: Path) -> str:
     env_python = _runtime_env_python(home)
     env_dir = env_python.parent.parent
@@ -712,8 +740,8 @@ def _create_or_update_qwen_env(home: Path) -> str:
         "wheel",
     ]
     subprocess.run([str(env_python), "-m", "pip", "install", *packages], check=True)
+    cuda_torch_result = _install_cuda_torch(env_python)
     required = [
-        "torch",
         "qwen-asr",
         "modelscope",
         "transformers",
@@ -724,6 +752,8 @@ def _create_or_update_qwen_env(home: Path) -> str:
     ]
     print("安装 / 更新 Qwen 字幕依赖：" + "、".join(required))
     subprocess.run([str(env_python), "-m", "pip", "install", *required], check=True)
+    if cuda_torch_result.get("skipped"):
+        subprocess.run([str(env_python), "-m", "pip", "install", "--upgrade", "torch"], check=True)
     probe = python_probe(str(env_python))
     packages_probe = probe.get("packages") or {}
     if not (packages_probe.get("torch") and packages_probe.get("qwen_asr") and packages_probe.get("modelscope")):
@@ -1124,7 +1154,7 @@ def setup_command(args) -> dict:
         print("下一步建议提供 30-60 秒样片，运行 smoke-test。")
         return result
 
-    unsupported_missing = [item for item in missing if item.get("type") not in {"python_env", "model"}]
+    unsupported_missing = [item for item in missing if item.get("type") not in {"python_env", "cuda_torch", "model"}]
     if unsupported_missing:
         result = {
             "stage": "setup_blocked",
@@ -1141,16 +1171,21 @@ def setup_command(args) -> dict:
         return result
 
     env_missing = any(item.get("type") == "python_env" for item in missing)
+    cuda_torch_missing = any(item.get("type") == "cuda_torch" for item in missing)
     if env_missing:
         print("检测到缺少 Qwen Python 运行环境。")
         print("我会在 runtime home 下创建独立环境，不修改系统 Python。")
         py = _create_or_update_qwen_env(home)
     else:
         py = _select_qwen_python(home=home, extra_python=getattr(args, "python", None))
+        if cuda_torch_missing:
+            print("检测到当前 Qwen Python 环境未启用 CUDA，正在安装 / 修复 CUDA 版 PyTorch。")
+            _install_cuda_torch(py)
     models_dir = _default_models_dir(home)
     model_ids = [item["model_id"] for item in missing if item.get("type") == "model"]
     _download_missing_models(py, models_dir, model_ids)
-    result = {"stage": "setup_completed", "home": str(home), "python": py, "models_dir": str(models_dir), "model_tier": args.model_tier, "installed_or_downloaded": (["python_env"] if env_missing else []) + model_ids, "status": "ready"}
+    installed_or_downloaded = (["python_env"] if env_missing else []) + (["cuda_torch"] if cuda_torch_missing else []) + model_ids
+    result = {"stage": "setup_completed", "home": str(home), "python": py, "models_dir": str(models_dir), "model_tier": args.model_tier, "installed_or_downloaded": installed_or_downloaded, "status": "ready"}
     write_current_state(home, result)
     print("缺失项已补齐。")
     print(f"运行环境：{py}")
@@ -1178,12 +1213,22 @@ def smoke_test(args) -> dict:
         ok = False
         error = repr(e)
     elapsed = time.perf_counter() - started
+    runner_report_path = output_dir / "debug" / "run_report.json"
+    runner_report = None
+    if runner_report_path.exists():
+        try:
+            runner_report = json.loads(runner_report_path.read_text(encoding="utf-8-sig"))
+        except Exception as e:
+            runner_report = {"read_error": repr(e), "path": str(runner_report_path)}
+    runner_system = (runner_report or {}).get("system") or {}
     duration_available = bool(duration and duration > 0)
     rtf = round(elapsed / duration, 3) if duration_available else None
     recommendation = _smoke_recommendation(ok, duration, elapsed, args.model_tier, error)
     warnings = list(duration_warnings)
     if ok and not duration_available:
         warnings.append("Subtitle generation succeeded, but sample_duration/rtf are unavailable because duration probing failed. ffprobe is recommended but not required.")
+    if ok and not getattr(args, "cpu", False) and runner_system.get("cuda_available") is False:
+        warnings.append("CUDA was requested by default, but the selected Python reports cuda_available=false; smoke-test ran on CPU.")
     result = {
         "stage": "smoke_test_completed",
         "success": ok,
@@ -1197,6 +1242,16 @@ def smoke_test(args) -> dict:
         "processing_time": round(elapsed, 2),
         "rtf": rtf,
         "rtf_available": rtf is not None,
+        "python": py if 'py' in locals() else None,
+        "run_report": str(runner_report_path) if runner_report_path.exists() else None,
+        "execution_path": {
+            "cuda_requested": not getattr(args, "cpu", False),
+            "cuda_available": runner_system.get("cuda_available"),
+            "cuda_device": runner_system.get("cuda_device"),
+            "device_used": runner_system.get("device_used"),
+            "dtype": runner_system.get("dtype"),
+            "torch": runner_system.get("torch"),
+        },
         "recommendation": recommendation,
         "warnings": warnings,
         "error": error,
@@ -1207,6 +1262,8 @@ def smoke_test(args) -> dict:
     if ok:
         print("运行测试完成。")
         print(f"耗时：{round(elapsed, 2)} 秒；RTF：{rtf if rtf is not None else '不可用'}")
+        execution_path = result.get("execution_path") or {}
+        print(f"执行路径：device_used={execution_path.get('device_used') or 'unknown'}；cuda_available={execution_path.get('cuda_available')}；cuda_device={execution_path.get('cuda_device') or 'none'}")
         if warnings:
             print("提示：")
             for item in warnings:
