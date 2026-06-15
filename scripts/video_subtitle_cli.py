@@ -46,6 +46,63 @@ SKIP_SCAN_DIRS = {
 }
 
 
+def _binary_names(name: str) -> list[str]:
+    if os.name == "nt" and not name.lower().endswith(".exe"):
+        return [f"{name}.exe", name]
+    return [name]
+
+
+def _first_existing_binary(candidates: list[Path]) -> str | None:
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def find_tool_binary(name: str, *, home: Path | None = None) -> str | None:
+    """Find ffmpeg-family binaries consistently across all CLI stages.
+
+    Lookup order is intentionally stable:
+    1. explicit environment variable, e.g. LZP_FFMPEG_PATH / VIDEO_SUBTITLE_FFMPEG_PATH
+    2. skill-local tools directory, e.g. <skill>/tools/ffmpeg.exe
+    3. runtime-local tools directories, e.g. <home>/tools/ffmpeg.exe or <home>/tools/ffmpeg/bin/ffmpeg.exe
+    4. PATH
+
+    This keeps setup-plan, smoke-test, and run behavior aligned and allows an
+    offline/portable ffmpeg zip to be dropped into a known tools directory.
+    """
+    upper = name.upper()
+    env_candidates = [
+        os.environ.get(f"LZP_{upper}_PATH"),
+        os.environ.get(f"VIDEO_SUBTITLE_{upper}_PATH"),
+        os.environ.get(f"{upper}_PATH"),
+    ]
+    for env_path in env_candidates:
+        if env_path:
+            p = Path(env_path)
+            if p.exists() and p.is_file():
+                return str(p)
+
+    file_names = _binary_names(name)
+    candidates: list[Path] = []
+    for fn in file_names:
+        candidates.append(SKILL_ROOT / "tools" / fn)
+        candidates.append(SKILL_ROOT / "tools" / "ffmpeg" / fn)
+        candidates.append(SKILL_ROOT / "tools" / "ffmpeg" / "bin" / fn)
+
+    if home is not None:
+        for fn in file_names:
+            candidates.append(home / "tools" / fn)
+            candidates.append(home / "tools" / "ffmpeg" / fn)
+            candidates.append(home / "tools" / "ffmpeg" / "bin" / fn)
+
+    local = _first_existing_binary(candidates)
+    if local:
+        return local
+
+    return shutil.which(name) or (shutil.which(f"{name}.exe") if os.name == "nt" else None)
+
+
 def default_home() -> Path:
     env = os.environ.get("VIDEO_SUBTITLE_HOME") or os.environ.get("LZP_VIDEO_SUBTITLE_HOME")
     if env:
@@ -357,13 +414,13 @@ def print_setup_plan_summary(plan: dict) -> None:
 
 def healthcheck(args) -> dict:
     home = Path(args.home) if args.home else default_home()
-    ffmpeg = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    ffmpeg = find_tool_binary("ffmpeg", home=home)
     gpu = detect_gpu()
     scan_roots = getattr(args, "scan_root", None) or []
     python_paths, scan_reports = find_pythons(home=home, extra_python=getattr(args, "python", None), scan_roots=scan_roots)
     pythons = _probe_unique_pythons(python_paths)
     model_base = _default_models_dir(home)
-    ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
+    ffprobe = find_tool_binary("ffprobe", home=home)
     models = {
         "qwen_asr_best": (model_base / "Qwen3-ASR-1.7B" / "model.safetensors").exists(),
         "qwen_asr_small": (model_base / "Qwen3-ASR-0.6B" / "model.safetensors").exists(),
@@ -383,6 +440,8 @@ def healthcheck(args) -> dict:
         "notes": [
             "Default healthcheck does not scan whole disks or network shares.",
             "Use --python to test a known environment; use --scan-root for bounded existing-venv discovery.",
+            "ffmpeg lookup order: explicit env path, skill/tools, runtime/tools, then PATH.",
+            "ffprobe is recommended for duration/RTF metrics but is not required for subtitle generation.",
             "Models default to <home>/models/qwen after command --home is resolved; override with VIDEO_SUBTITLE_MODELS_DIR / LZP_VIDEO_SUBTITLE_MODELS_DIR / QWEN_SUBTITLE_MODELS if needed.",
             "--scan-root is bounded by depth, directory count, timeout, symlink skipping, and common heavy-directory pruning.",
             "Custom homes, including NAS/network paths, are allowed but must pass healthcheck/smoke tests.",
@@ -435,11 +494,12 @@ def setup_plan(args) -> dict:
         for p in report["pythons"]
     )
     missing = []
+    warnings = []
     if not (report.get("ffmpeg") or {}).get("found"):
         missing.append({
             "type": "binary",
             "label": "ffmpeg",
-            "detail": "未在 PATH 中检测到 ffmpeg；需要用于音频抽取和 smoke-test 截取样片",
+            "detail": "未检测到 ffmpeg；需要用于音频抽取和 smoke-test 截取样片。可通过 PATH、skill/tools 或 runtime/tools 提供。",
         })
     if not (report.get("ffprobe") or {}).get("found"):
         warnings.append("ffprobe not detected: sample duration / RTF may be unavailable; ffmpeg fallback will be attempted where possible.")
@@ -466,11 +526,11 @@ def setup_plan(args) -> dict:
             "detail": "模型目录中未检测到 Qwen3-ForcedAligner-0.6B",
             "model_id": "Qwen/Qwen3-ForcedAligner-0.6B",
         })
-    warnings = [
+    warnings.extend([
         "This skill is a Qwen local subtitle workflow. It does not auto-switch to Whisper based on hardware.",
         "Default ASR tier is best (Qwen3-ASR-1.7B). If smoke-test is too slow or fails, downgrade to small (Qwen3-ASR-0.6B).",
         "Qwen local runs large local models; machines without a validated GPU fast path may be slow or need platform-specific PyTorch setup.",
-    ]
+    ])
     if has_nvidia:
         hardware_status = "validated-fast-path"
         warnings.append("NVIDIA/CUDA detected: this is the currently validated fast path for Qwen local.")
@@ -735,9 +795,9 @@ def _call_qwen_runner(config: dict, *, work_dir: Path | None = None, models_dir:
     subprocess.run([py, str(runner), "--config", str(config_path)], check=True, env=env, text=True, encoding="utf-8", errors="replace")
 
 
-def _probe_audio_duration_seconds(path: Path) -> tuple[float | None, list[str]]:
+def _probe_audio_duration_seconds(path: Path, *, home: Path | None = None) -> tuple[float | None, list[str]]:
     warnings: list[str] = []
-    ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
+    ffprobe = find_tool_binary("ffprobe", home=home)
     if ffprobe:
         r = run_probe([ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], timeout=20)
         if r.get("ok") and r.get("stdout"):
@@ -749,7 +809,7 @@ def _probe_audio_duration_seconds(path: Path) -> tuple[float | None, list[str]]:
             warnings.append("ffprobe duration probe failed; trying ffmpeg fallback.")
     else:
         warnings.append("ffprobe not found; trying ffmpeg fallback for duration. Subtitle generation can still succeed without ffprobe.")
-    ffmpeg = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    ffmpeg = find_tool_binary("ffmpeg", home=home)
     if not ffmpeg:
         warnings.append("ffmpeg not found; sample_duration and rtf are unavailable.")
         return None, warnings
@@ -767,18 +827,18 @@ def _probe_audio_duration_seconds(path: Path) -> tuple[float | None, list[str]]:
         return None, warnings
 
 
-def _probe_audio_duration_value(path: Path) -> float | None:
-    duration, _warnings = _probe_audio_duration_seconds(path)
+def _probe_audio_duration_value(path: Path, *, home: Path | None = None) -> float | None:
+    duration, _warnings = _probe_audio_duration_seconds(path, home=home)
     return duration
 
 
-def _extract_smoke_sample(input_path: Path, sample_path: Path, seconds: int = 60) -> Path:
-    duration = _probe_audio_duration_value(input_path)
+def _extract_smoke_sample(input_path: Path, sample_path: Path, seconds: int = 60, *, home: Path | None = None) -> Path:
+    duration = _probe_audio_duration_value(input_path, home=home)
     if duration is not None and duration <= seconds + 3:
         return input_path
-    ffmpeg = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    ffmpeg = find_tool_binary("ffmpeg", home=home)
     if not ffmpeg:
-        raise RuntimeError("需要截取 60 秒样片，但没有找到 ffmpeg。请先安装 ffmpeg 或提供 30-60 秒短样片。")
+        raise RuntimeError("需要截取 60 秒样片，但没有找到 ffmpeg。请先安装 ffmpeg、把便携 ffmpeg 放到 skill/tools 或 runtime/tools，或提供 30-60 秒短样片。")
     sample_path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([ffmpeg, "-y", "-i", str(input_path), "-t", str(seconds), "-c", "copy", str(sample_path)], check=True, text=True, encoding="utf-8", errors="replace", capture_output=True)
     return sample_path
@@ -1104,9 +1164,9 @@ def smoke_test(args) -> dict:
     input_path = Path(args.input)
     sample_dir = home / "smoke-tests" / time.strftime("%Y%m%d-%H%M%S")
     sample_dir.mkdir(parents=True, exist_ok=True)
-    sample_path = _extract_smoke_sample(input_path, sample_dir / f"{input_path.stem}_60s{input_path.suffix}", seconds=60)
+    sample_path = _extract_smoke_sample(input_path, sample_dir / f"{input_path.stem}_60s{input_path.suffix}", seconds=60, home=home)
     output_dir = sample_dir / "output"
-    duration, duration_warnings = _probe_audio_duration_seconds(sample_path)
+    duration, duration_warnings = _probe_audio_duration_seconds(sample_path, home=home)
     started = time.perf_counter()
     ok = True
     error = None

@@ -46,9 +46,33 @@ def run(cmd):
 
 def find_ffmpeg() -> str:
     root = Path(__file__).resolve().parent.parent
-    bundled = root / "tools" / "ffmpeg.exe"
-    if bundled.exists():
-        return str(bundled)
+    env_candidates = [
+        os.environ.get("LZP_FFMPEG_PATH"),
+        os.environ.get("VIDEO_SUBTITLE_FFMPEG_PATH"),
+        os.environ.get("FFMPEG_PATH"),
+    ]
+    for env_path in env_candidates:
+        if env_path and Path(env_path).exists():
+            return str(Path(env_path))
+    names = ["ffmpeg.exe", "ffmpeg"] if os.name == "nt" else ["ffmpeg"]
+    candidates = []
+    for name in names:
+        candidates.extend([
+            root / "tools" / name,
+            root / "tools" / "ffmpeg" / name,
+            root / "tools" / "ffmpeg" / "bin" / name,
+        ])
+        home_env = os.environ.get("VIDEO_SUBTITLE_HOME") or os.environ.get("LZP_VIDEO_SUBTITLE_HOME")
+        if home_env:
+            home = Path(home_env)
+            candidates.extend([
+                home / "tools" / name,
+                home / "tools" / "ffmpeg" / name,
+                home / "tools" / "ffmpeg" / "bin" / name,
+            ])
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return str(candidate)
     return "ffmpeg"
 
 

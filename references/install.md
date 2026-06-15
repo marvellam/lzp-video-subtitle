@@ -145,15 +145,53 @@ align: Qwen/Qwen3-ForcedAligner-0.6B
 
 ## 6. ffmpeg / ffprobe
 
-### 核心依赖
+### 核心依赖：ffmpeg
 
 ```text
 ffmpeg
 ```
 
-`ffmpeg` 用于抽取音频和截取 smoke-test 样片，属于核心运行链路。
+`ffmpeg` 用于抽取音频、统一转码为 ASR 需要的 16k 单声道 WAV，并在 smoke-test 时截取 30-60 秒样片，属于当前版本的核心运行链路。
 
-### 推荐但不阻断
+如果缺少 `ffmpeg`，`setup-plan` 会把它列为外部阻断项；`setup` 不会静默安装外部二进制，请先用下面任一方式补齐后再继续。
+
+Windows 推荐方式：
+
+```powershell
+winget install --id Gyan.FFmpeg -e
+```
+
+其他可选方式：
+
+```powershell
+choco install ffmpeg -y
+scoop install ffmpeg
+conda install -c conda-forge ffmpeg -y
+```
+
+如果网络下载不稳定，也可以使用便携包，把 `ffmpeg.exe` / `ffprobe.exe` 放到以下任一位置：
+
+```text
+<skill_root>/tools/ffmpeg.exe
+<skill_root>/tools/ffmpeg/bin/ffmpeg.exe
+<runtime_home>/tools/ffmpeg.exe
+<runtime_home>/tools/ffmpeg/bin/ffmpeg.exe
+```
+
+也可以用环境变量显式指定：
+
+```powershell
+$env:LZP_FFMPEG_PATH = "C:\path\to\ffmpeg.exe"
+$env:LZP_FFPROBE_PATH = "C:\path\to\ffprobe.exe"
+```
+
+查找顺序为：
+
+```text
+环境变量 → skill/tools → runtime/tools → PATH
+```
+
+### 推荐但不阻断：ffprobe
 
 ```text
 ffprobe

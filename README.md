@@ -341,6 +341,40 @@ torch / qwen_asr / modelscope / transformers
 ffmpeg
 ```
 
+`ffmpeg` 是当前版本核心依赖，用于从视频/音频中抽取并转码出 ASR 需要的音频，也用于 smoke-test 截取样片。
+
+如果 Windows 上缺少 `ffmpeg`，优先使用：
+
+```powershell
+winget install --id Gyan.FFmpeg -e
+```
+
+也可使用：
+
+```powershell
+choco install ffmpeg -y
+scoop install ffmpeg
+conda install -c conda-forge ffmpeg -y
+```
+
+如果网络下载不稳定，可以使用便携包，把 `ffmpeg.exe` / `ffprobe.exe` 放到以下任一位置：
+
+```text
+<skill_root>/tools/ffmpeg.exe
+<skill_root>/tools/ffmpeg/bin/ffmpeg.exe
+<runtime_home>/tools/ffmpeg.exe
+<runtime_home>/tools/ffmpeg/bin/ffmpeg.exe
+```
+
+也可以用环境变量指定：
+
+```powershell
+$env:LZP_FFMPEG_PATH = "C:\path\to\ffmpeg.exe"
+$env:LZP_FFPROBE_PATH = "C:\path\to\ffprobe.exe"
+```
+
+查找顺序：环境变量 → skill/tools → runtime/tools → PATH。
+
 ### 推荐但不阻断
 
 ```text
